@@ -2,256 +2,287 @@
 <html lang="vi">
 <head>
 <meta charset="UTF-8">
-<title>Pikachu Classic – Canvas Only</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Pikachu Offline</title>
+
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#111">
+
 <style>
 html,body{
-  margin:0;padding:0;background:#020617;color:#fff;
-  font-family:Arial,Helvetica,sans-serif;user-select:none;
+  margin:0;
+  padding:0;
+  background:#111;
+  overflow:hidden;
+  font-family:sans-serif;
 }
-#ui{
-  display:flex;gap:14px;align-items:center;
-  padding:10px;background:#020617;
+
+#gameWrapper{
+  position:fixed;
+  top:1in;
+  bottom:1in;
+  left:1in;
+  right:1in;
+  display:flex;
+  flex-direction:column;
 }
-button{cursor:pointer;padding:6px 12px}
-#wrap{
-  display:flex;justify-content:center;align-items:center;
-  padding:1in; /* margin 1 inch all sides */
+
+#hud{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  color:white;
+  font-size:18px;
+  margin-bottom:10px;
 }
-canvas{background:#020617;touch-action:manipulation}
-#overlay,#startScreen{
-  position:fixed;inset:0;
-  display:flex;align-items:center;justify-content:center;
-  background:rgba(0,0,0,.75);z-index:10;
+
+#canvasContainer{
+  flex:1;
+  position:relative;
 }
-#overlay{display:none;flex-direction:column;font-size:48px}
-#startScreen button,#overlay button{
-  font-size:22px;margin-top:20px
+
+canvas{
+  background:#222;
+  width:100%;
+  height:100%;
+  touch-action:none;
+}
+
+button{
+  padding:8px 14px;
+  font-size:16px;
+  border:none;
+  border-radius:8px;
+  cursor:pointer;
+}
+
+#startScreen, #gameOver{
+  position:absolute;
+  inset:0;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  background:rgba(0,0,0,0.85);
+  flex-direction:column;
+  color:white;
+  z-index:10;
+}
+
+.hidden{ display:none; }
+
+#hintBtn{
+  background:#f39c12;
 }
 </style>
 </head>
 <body>
 
-<div id="ui">
-  <div>MÀN: <b id="lv">1</b></div>
-  <div>ĐIỂM: <b id="score">0</b></div>
-  <div style="width:220px;height:12px;background:#1e293b;position:relative">
-    <div id="timebar" style="height:100%;background:#22c55e;width:100%"></div>
+<div id="gameWrapper">
+
+  <div id="hud">
+    <div>⏱ <span id="time">60</span></div>
+    <div>🎯 Level: <span id="level">1</span></div>
+    <div>⭐ Điểm: <span id="score">0</span></div>
+    <div>
+      <button id="hintBtn">Gợi ý (10)</button>
+      <button onclick="restart()">Chơi lại</button>
+    </div>
   </div>
-  <button id="restartBtn">CHƠI LẠI</button>
-</div>
 
-<div id="wrap">
-  <canvas id="game"></canvas>
-</div>
+  <div id="canvasContainer">
+    <canvas id="gameCanvas"></canvas>
 
-<div id="startScreen">
-  <button id="startBtn">BẮT ĐẦU</button>
-</div>
+    <div id="startScreen">
+      <button onclick="startGame()">BẮT ĐẦU</button>
+    </div>
 
-<div id="overlay">
-  HẾT GIỜ
-  <button id="restartBtn2">CHƠI LẠI</button>
+    <div id="gameOver" class="hidden">
+      <h2>HẾT GIỜ</h2>
+      <button onclick="restart()">CHƠI LẠI</button>
+    </div>
+  </div>
 </div>
 
 <script>
-/* ================= CONFIG ================= */
-const COLS=16, ROWS=9;
-const MAX_TYPE=35;
-const LEVEL_TIME=360; // 6 minutes
-const PATH_TIME=0.4;
-
-/* ================= CANVAS ================= */
-const canvas=document.getElementById("game");
-const ctx=canvas.getContext("2d");
-function resize(){
-  const DPR=window.devicePixelRatio||1;
-  const w=Math.min(window.innerWidth-96,1366);
-  const h=w*9/16;
-  canvas.style.width=w+"px";
-  canvas.style.height=h+"px";
-  canvas.width=w*DPR;
-  canvas.height=h*DPR;
-  ctx.setTransform(DPR,0,0,DPR,0,0);
+if('serviceWorker' in navigator){
+  navigator.serviceWorker.register('sw.js');
 }
-window.addEventListener("resize",resize);
+
+const canvas=document.getElementById('gameCanvas');
+const ctx=canvas.getContext('2d');
+
+let rows=8, cols=12;
+let board=[];
+let selected=[];
+let tileSize;
+let time=60;
+let timerInterval;
+let score=0;
+let level=1;
+let hintLeft=10;
+let frozen=true;
+
+function resize(){
+  canvas.width=canvas.offsetWidth;
+  canvas.height=canvas.offsetHeight;
+  tileSize=Math.min(canvas.width/cols, canvas.height/rows);
+}
+window.addEventListener('resize',resize);
 resize();
 
-/* ================= STATE ================= */
-let grid=[],imgs=[];
-let level=1,score=0;
-let timeLeft=LEVEL_TIME;
-let running=false,paused=false;
-let selected=null;
-let showPath=null,pathTimer=0;
-let lastTime=0;
-
-/* ================= LOAD IMAGES ================= */
-for(let i=1;i<=MAX_TYPE;i++){
-  let img=new Image();
-  img.src="images/"+i+".png";
-  imgs[i]=img;
-}
-
-/* ================= INIT GRID ================= */
-function initGrid(){
-  grid=[];
-  let pool=[];
-  for(let i=0;i<COLS*ROWS/2;i++){
-    let t=1+Math.floor(Math.random()*MAX_TYPE);
-    pool.push(t,t);
+function createBoard(){
+  board=[];
+  let total=rows*cols;
+  let values=[];
+  for(let i=1;i<=total/2;i++){
+    values.push(i%20+1);
+    values.push(i%20+1);
   }
-  pool.sort(()=>Math.random()-0.5);
-  for(let y=0;y<ROWS;y++){
+  values.sort(()=>Math.random()-0.5);
+
+  for(let r=0;r<rows;r++){
     let row=[];
-    for(let x=0;x<COLS;x++){
-      let t=pool.pop();
-      if(y>0 && grid[y-1][x].type===t) t=(t%MAX_TYPE)+1;
-      row.push({type:t,removed:false});
+    for(let c=0;c<cols;c++){
+      row.push(values.pop());
     }
-    grid.push(row);
+    board.push(row);
   }
 }
 
-/* ================= UTILS ================= */
-function inBounds(x,y){return x>=0&&y>=0&&x<COLS&&y<ROWS;}
-function cellFromMouse(mx,my){
-  const tw=canvas.clientWidth/COLS;
-  const th=canvas.clientHeight/ROWS;
-  let x=Math.floor(mx/tw),y=Math.floor(my/th);
-  if(inBounds(x,y)) return {x,y};
-  return null;
-}
-
-/* ================= PATHFIND (outside allowed) ================= */
-function canConnect(a,b){
-  if(a.x===b.x&&a.y===b.y) return null;
-  if(grid[a.y][a.x].type!==grid[b.y][b.x].type) return null;
-  const W=COLS+2,H=ROWS+2;
-  let map=Array.from({length:H},(_,y)=>
-    Array.from({length:W},(_,x)=>{
-      if(x===0||y===0||x===W-1||y===H-1) return 0;
-      return grid[y-1][x-1].removed?0:1;
-    })
-  );
-  map[a.y+1][a.x+1]=0;
-  map[b.y+1][b.x+1]=0;
-  const dirs=[[1,0],[-1,0],[0,1],[0,-1]];
-  let q=[{x:a.x+1,y:a.y+1,dir:-1,turns:0,path:[[a.x,a.y]]}];
-  let seen=new Set();
-  while(q.length){
-    let n=q.shift();
-    for(let d=0;d<4;d++){
-      let nt=n.dir===-1||n.dir===d?n.turns:n.turns+1;
-      if(nt>2) continue;
-      let nx=n.x+dirs[d][0], ny=n.y+dirs[d][1];
-      let key=nx+","+ny+","+d+","+nt;
-      if(seen.has(key)) continue;
-      seen.add(key);
-      if(nx===b.x+1&&ny===b.y+1){
-        return n.path.concat([[b.x,b.y]]);
-      }
-      if(nx>=0&&ny>=0&&nx<W&&ny<H&&map[ny][nx]===0){
-        let px=Math.max(-1,Math.min(COLS,nx-1));
-        let py=Math.max(-1,Math.min(ROWS,ny-1));
-        q.push({x:nx,y:ny,dir:d,turns:nt,
-          path:n.path.concat([[px,py]])});
-      }
-    }
-  }
-  return null;
-}
-
-/* ================= INPUT ================= */
-canvas.addEventListener("click",e=>{
-  if(!running||paused||showPath) return;
-  const r=canvas.getBoundingClientRect();
-  let pos=cellFromMouse(e.clientX-r.left,e.clientY-r.top);
-  if(!pos) return;
-  let c=grid[pos.y][pos.x];
-  if(c.removed) return;
-  if(!selected){selected=pos;return;}
-  let path=canConnect(selected,pos);
-  if(path){
-    showPath={path,a:selected,b:pos};
-    pathTimer=PATH_TIME;
-    score+=10*(path.length-1);
-  }else selected=null;
-});
-
-/* ================= GAME OVER ================= */
-function gameOver(){
-  running=false;
-  document.getElementById("overlay").style.display="flex";
-}
-
-/* ================= LOOP ================= */
-function update(t){
-  if(!running||paused){lastTime=t;requestAnimationFrame(update);return;}
-  let dt=(t-lastTime)/1000; lastTime=t;
-  timeLeft-=dt;
-  if(timeLeft<=0){gameOver();}
-  if(showPath){
-    pathTimer-=dt;
-    if(pathTimer<=0){
-      grid[showPath.a.y][showPath.a.x].removed=true;
-      grid[showPath.b.y][showPath.b.x].removed=true;
-      showPath=null; selected=null;
-    }
-  }
-  draw();
-  document.getElementById("score").textContent=score;
-  document.getElementById("lv").textContent=level;
-  document.getElementById("timebar").style.width=(timeLeft/LEVEL_TIME*100)+"%";
-  requestAnimationFrame(update);
-}
-
-/* ================= DRAW ================= */
 function draw(){
   ctx.clearRect(0,0,canvas.width,canvas.height);
-  const tw=canvas.clientWidth/COLS;
-  const th=canvas.clientHeight/ROWS;
-  for(let y=0;y<ROWS;y++)for(let x=0;x<COLS;x++){
-    let c=grid[y][x];
-    if(c.removed && !(showPath && ((showPath.a.x===x&&showPath.a.y===y)||(showPath.b.x===x&&showPath.b.y===y)))) continue;
-    ctx.drawImage(imgs[c.type],x*tw,y*th,tw-2,th-2);
-    if(selected&&selected.x===x&&selected.y===y){
-      ctx.strokeStyle="#fff";ctx.lineWidth=3;
-      ctx.strokeRect(x*tw,y*th,tw-2,th-2);
+  for(let r=0;r<rows;r++){
+    for(let c=0;c<cols;c++){
+      if(board[r][c]){
+        ctx.drawImage(
+          images[board[r][c]],
+          c*tileSize,
+          r*tileSize,
+          tileSize,
+          tileSize
+        );
+      }
     }
   }
-  if(showPath){
-    ctx.strokeStyle="orange";ctx.lineWidth=4;
-    ctx.beginPath();
-    showPath.path.forEach((p,i)=>{
-      let cx=(p[0]+0.5)*tw, cy=(p[1]+0.5)*th;
-      if(i===0) ctx.moveTo(cx,cy); else ctx.lineTo(cx,cy);
-    });
-    ctx.stroke();
+}
+
+canvas.addEventListener('click',e=>{
+  if(frozen) return;
+
+  const rect=canvas.getBoundingClientRect();
+  const x=e.clientX-rect.left;
+  const y=e.clientY-rect.top;
+  const c=Math.floor(x/tileSize);
+  const r=Math.floor(y/tileSize);
+
+  if(!board[r] || !board[r][c]) return;
+
+  selected.push({r,c});
+  if(selected.length==2){
+    checkMatch();
+  }
+});
+
+function drawLine(p1,p2){
+  ctx.strokeStyle="orange";
+  ctx.lineWidth=4;
+  ctx.beginPath();
+  ctx.moveTo(p1.c*tileSize+tileSize/2,p1.r*tileSize+tileSize/2);
+  ctx.lineTo(p2.c*tileSize+tileSize/2,p2.r*tileSize+tileSize/2);
+  ctx.stroke();
+}
+
+function checkMatch(){
+  let a=selected[0];
+  let b=selected[1];
+
+  if(board[a.r][a.c]==board[b.r][b.c]){
+    drawLine(a,b);
+    setTimeout(()=>{
+      board[a.r][a.c]=0;
+      board[b.r][b.c]=0;
+      score+=10;
+      updateHUD();
+      selected=[];
+      draw();
+    },400);
+  }else{
+    selected=[];
   }
 }
 
-/* ================= UI ================= */
-function startGame(){
-  document.getElementById("startScreen").style.display="none";
-  document.getElementById("overlay").style.display="none";
-  level=1;score=0;timeLeft=LEVEL_TIME;
-  initGrid();running=true;paused=false;
-  lastTime=performance.now();
+function updateHUD(){
+  document.getElementById('time').innerText=time;
+  document.getElementById('score').innerText=score;
+  document.getElementById('level').innerText=level;
+  document.getElementById('hintBtn').innerText="Gợi ý ("+hintLeft+")";
 }
-startBtn.onclick=startGame;
-restartBtn.onclick=startGame;
-restartBtn2.onclick=startGame;
 
-initGrid();
-requestAnimationFrame(update);
+function startTimer(){
+  timerInterval=setInterval(()=>{
+    if(time<=0){
+      clearInterval(timerInterval);
+      showAutoHint();
+      setTimeout(()=>{
+        document.getElementById('gameOver').classList.remove('hidden');
+        frozen=true;
+      },3000);
+    }else{
+      time--;
+      updateHUD();
+    }
+  },1000);
+}
+
+function startGame(){
+  document.getElementById('startScreen').classList.add('hidden');
+  createBoard();
+  draw();
+  time=60;
+  score=0;
+  hintLeft=10;
+  frozen=false;
+  updateHUD();
+  startTimer();
+}
+
+function restart(){
+  clearInterval(timerInterval);
+  document.getElementById('gameOver').classList.add('hidden');
+  startGame();
+}
+
+document.getElementById('hintBtn').onclick=()=>{
+  if(hintLeft<=0 || frozen) return;
+  hintLeft--;
+  showAutoHint();
+  updateHUD();
+};
+
+function showAutoHint(){
+  for(let r=0;r<rows;r++){
+    for(let c=0;c<cols;c++){
+      for(let r2=0;r2<rows;r2++){
+        for(let c2=0;c2<cols;c2++){
+          if(r!=r2||c!=c2){
+            if(board[r][c] && board[r][c]==board[r2][c2]){
+              drawLine({r,c},{r:r2,c:c2});
+              setTimeout(draw,3000);
+              return;
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+const images={};
+for(let i=1;i<=20;i++){
+  const img=new Image();
+  img.src="images/"+i+".png";
+  images[i]=img;
+}
 </script>
-
-<!--
-HƯỚNG DẪN:
-1. Tạo file index.html.
-2. Tạo thư mục /images, đặt ảnh 1.png → 35.png.
-3. Dán nội dung này vào index.html.
-4. Mở bằng Chrome/Edge để chơi offline.
--->
 </body>
 </html>
