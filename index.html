@@ -26,6 +26,8 @@ html,body{
   display:flex;
   flex-direction:column;
 }
+#startScreen { z-index:20; }
+#gameOver { z-index:30; }
 
 #hud{
   display:flex;
@@ -221,36 +223,52 @@ function updateHUD(){
 function startTimer(){
   timerInterval=setInterval(()=>{
     if(time<=0){
-      clearInterval(timerInterval);
-      showAutoHint();
-      setTimeout(()=>{
-        document.getElementById('gameOver').classList.remove('hidden');
-        frozen=true;
-      },3000);
-    }else{
-      time--;
-      updateHUD();
-    }
+  clearInterval(timerInterval);
+  frozen = true;
+
+  // hiện auto hint trước
+  showAutoHint();
+
+  setTimeout(()=>{
+    document.getElementById('gameOver').classList.remove('hidden');
+  },3000);
+
+  return;
+}
+
   },1000);
 }
 
 function startGame(){
+
+  // Ẩn tất cả overlay trước
   document.getElementById('startScreen').classList.add('hidden');
+  document.getElementById('gameOver').classList.add('hidden');
+
+  clearInterval(timerInterval);
+
   createBoard();
   draw();
-  time=60;
-  score=0;
-  hintLeft=10;
-  frozen=false;
+
+  time = 60;
+  score = 0;
+  hintLeft = 10;
+  frozen = false;
+
   updateHUD();
   startTimer();
 }
 
+
 function restart(){
   clearInterval(timerInterval);
+
+  // Ẩn GameOver nếu đang hiện
   document.getElementById('gameOver').classList.add('hidden');
+
   startGame();
 }
+
 
 document.getElementById('hintBtn').onclick=()=>{
   if(hintLeft<=0 || frozen) return;
